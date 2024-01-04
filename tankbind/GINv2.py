@@ -31,7 +31,7 @@ class GraphIsomorphismConv(nn.Module):
         activation (str or function, optional): activation function
     """
 
-    def __init__(self, input_dim, output_dim, edge_input_dim=None, hidden_dims=None, eps=0, learn_eps=False,
+    def __init__(self, input_dim, output_dim, edge_input_dim=None, hidden_dims=None, eps=0, learn_eps=True,
                  batch_norm=False, activation="relu"):
         super(GraphIsomorphismConv, self).__init__()
         self.input_dim = input_dim
@@ -135,7 +135,7 @@ class GIN(nn.Module):
         readout (str, optional): readout function. Available functions are ``sum`` and ``mean``.
     """
 
-    def __init__(self, input_dim=None, hidden_dims=None, edge_input_dim=None, num_mlp_layer=2, eps=0, learn_eps=False,
+    def __init__(self, input_dim=None, hidden_dims=None, edge_input_dim=None, num_mlp_layer=2, eps=0, learn_eps=True,
                  short_cut=False, batch_norm=False, activation="relu", concat_hidden=False,
                  readout="sum"):
         super(GIN, self).__init__()

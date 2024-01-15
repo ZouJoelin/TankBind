@@ -10,7 +10,11 @@ import torch.nn.functional as F
 from tqdm import tqdm
 import torchmetrics
 
+# checked
 def read_pdbbind_data(fileName):
+    """ load protein-ligand complexes infomation from pdb file
+    return: DataFrame
+    """
     with open(fileName) as f:
         a = f.readlines()
     info = []
@@ -27,36 +31,51 @@ def read_pdbbind_data(fileName):
     info.affinity = info.affinity.astype(float)
     return info
 
+# checked
 def compute_dis_between_two_vector(a, b):
     return (((a - b)**2).sum())**0.5
 
+# checked
 def get_protein_edge_features_and_index(protein_edge_index, protein_edge_s, protein_edge_v, keepNode):
-    # protein
+    """ extract protein edge feature according to keepNode 
+    return: shorter protein edge feature (input_edge_idx, input_protein_edge_s, input_protein_edge_v)
+    """
     input_edge_list = []
     input_protein_edge_feature_idx = []
-    new_node_index = np.cumsum(keepNode) - 1
+
+    ### keepEdge=T, onlt if both node of the edge is T
     keepEdge = keepNode[protein_edge_index].min(axis=0)
+
+    ### re-index selected node
+    new_node_index = np.cumsum(keepNode) - 1
+    
+    ### do selection
     new_edge_inex = new_node_index[protein_edge_index]
     input_edge_idx = torch.tensor(new_edge_inex[:, keepEdge], dtype=torch.long)
     input_protein_edge_s = protein_edge_s[keepEdge]
     input_protein_edge_v = protein_edge_v[keepEdge]
     return input_edge_idx, input_protein_edge_s, input_protein_edge_v
 
-def get_keepNode(com, protein_node_xyz, n_node, pocket_radius, use_whole_protein, 
+# checked
+def get_keepNode(compound_center_com, protein_node_xyz, n_node, pocket_radius, use_whole_protein, 
                      use_compound_com_as_pocket, add_noise_to_com, chosen_pocket_com):
+    """ select protein nodes within pocket_radius of compound_center_com/chosen_pocket_com
+    return: keepNode mask
+    """
     if use_whole_protein:
         keepNode = np.ones(n_node, dtype=bool)
     else:
+        ### select protein nodes within pocket_radius of compound's center(compound_center_com)
         keepNode = np.zeros(n_node, dtype=bool)
-        # extract node based on compound COM.
         if use_compound_com_as_pocket:
             if add_noise_to_com:
-                com = com + add_noise_to_com * (2 * np.random.rand(*com.shape) - 1)
+                compound_center_com = compound_center_com + add_noise_to_com * (2 * np.random.rand(*compound_center_com.shape) - 1)
             for i, node in enumerate(protein_node_xyz):
-                dis = compute_dis_between_two_vector(node, com)
+                dis = compute_dis_between_two_vector(node, compound_center_com)
                 keepNode[i] = dis < pocket_radius
 
     if chosen_pocket_com is not None:
+        ### select protein nodes within pocket_radius of query_pocket's center(chosen_pocket_com)
         another_keepNode = np.zeros(n_node, dtype=bool)
         for a_com in chosen_pocket_com:
             if add_noise_to_com:
@@ -64,33 +83,43 @@ def get_keepNode(com, protein_node_xyz, n_node, pocket_radius, use_whole_protein
             for i, node in enumerate(protein_node_xyz):
                 dis = compute_dis_between_two_vector(node, a_com)
                 another_keepNode[i] |= dis < pocket_radius
+        
+        ### take union set of nodes within certain radius of compound_center_com / chosen_pocket_com
         keepNode |= another_keepNode
+
     return keepNode
 
-
-def construct_data_from_graph_gvp(protein_node_xyz, protein_seq, protein_node_s, 
-                                  protein_node_v, protein_edge_index, protein_edge_s, protein_edge_v,
-                                 coords, compound_node_features, input_atom_edge_list, 
-                                 input_atom_edge_attr_list, includeDisMap=True, contactCutoff=8.0, pocket_radius=20, interactionThresholdDistance=10, compoundMode=1, 
-                                 add_noise_to_com=None, use_whole_protein=False, use_compound_com_as_pocket=True, chosen_pocket_com=None):
+# checked
+def construct_data_from_graph_gvp(protein_node_xyz, protein_seq, protein_node_s, protein_node_v, protein_edge_index, protein_edge_s, protein_edge_v,
+                                 coords, compound_node_features, input_atom_edge_list, input_atom_edge_attr_list, 
+                                 pocket_radius=20, use_whole_protein=False, includeDisMap=True,
+                                 use_compound_com_as_pocket=True, chosen_pocket_com=None, compoundMode=1,
+                                 add_noise_to_com=None, contactCutoff=8.0, interactionThresholdDistance=10):
     n_node = protein_node_xyz.shape[0]
     n_compound_node = coords.shape[0]
-    # centroid instead of com. 
-    com = coords.mean(axis=0)
-    keepNode = get_keepNode(com, protein_node_xyz.numpy(), n_node, pocket_radius, use_whole_protein, 
+
+    ### center coords of binding_compound. (centroid instead of coords)
+    compound_center_com = coords.mean(axis=0)
+    ### select protein nodes within pocket_radius of compound_center_com/chosen_pocket_com
+    keepNode = get_keepNode(compound_center_com, protein_node_xyz.numpy(), n_node, pocket_radius, use_whole_protein, 
                              use_compound_com_as_pocket, add_noise_to_com, chosen_pocket_com)
 
     if keepNode.sum() < 5:
         # if only include less than 5 residues, simply add first 100 residues.
         keepNode[:100] = True
+
     input_node_xyz = protein_node_xyz[keepNode]
+    ### select protein edge according to keepNode
     input_edge_idx, input_protein_edge_s, input_protein_edge_v = get_protein_edge_features_and_index(protein_edge_index, protein_edge_s, protein_edge_v, keepNode)
 
     # construct graph data.
     data = HeteroData()
 
     # only if your ligand is real this y_contact is meaningful.
+    ### real: NOT retrieve from RDkit by smile, which happens while predicting
+    ### distance between protein_node and compound_node
     dis_map = scipy.spatial.distance.cdist(input_node_xyz.cpu().numpy(), coords)
+    ### y_contact: whether distance is less than contactCutoff (default: 8.0)
     y_contact = dis_map < contactCutoff
     if includeDisMap:
         # treat all distance above 10A as the same.
@@ -113,9 +142,22 @@ def construct_data_from_graph_gvp(protein_node_xyz, protein_seq, protein_node_s,
         data['compound', 'c2c', 'compound'].edge_index = torch.tensor(input_atom_edge_list, dtype=torch.long).t().contiguous()
         c2c = torch.tensor(input_atom_edge_attr_list, dtype=torch.long)
         data['compound', 'c2c', 'compound'].edge_attr = F.one_hot(c2c-1, num_classes=1)  # [num_edges, num_edge_features]
+    ### default
     elif compoundMode == 1:
         data['compound'].x = compound_node_features
+        ### input_atom_edge_list: a list of edge, don't know what does that represent(edge_num, 3)
+        # example: 
+        # tensor([[ 0,  1,  0],
+        #         [ 1,  0,  0],
+        #         [ 1,  2,  0],
+        #         ...,
+        #         [11,  9,  0]])
+        ### > torch.Size([22, 3])
+        ### edge_index: 
+        ### > torch.Size([2, 22])
         data['compound', 'c2c', 'compound'].edge_index = input_atom_edge_list[:,:2].long().t().contiguous()
+        ### edge_weight: a tensor of 1
+        ### > torch.Size([22])
         data['compound', 'c2c', 'compound'].edge_weight = torch.ones(input_atom_edge_list.shape[0])
         data['compound', 'c2c', 'compound'].edge_attr = input_atom_edge_attr_list
     return data, input_node_xyz, keepNode

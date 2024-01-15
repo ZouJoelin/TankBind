@@ -1,3 +1,4 @@
+# checked
 from Bio.PDB import PDBParser
 import pandas as pd
 import numpy as np
@@ -20,7 +21,11 @@ from rdkit.Geometry import Point3D
 
 from torchdrug import data as td     # conda install torchdrug -c milagraph -c conda-forge -c pytorch -c pyg if fail to import
 
+# checked
 def read_mol(sdf_fileName, mol2_fileName, verbose=False):
+    """ read .sdf and .mol2 file
+    return: rdkit.Chem.rdchem.Mol
+    """
     Chem.WrapLogs()
     stderr = sys.stderr
     sio = sys.stderr = StringIO()
@@ -50,8 +55,9 @@ def read_mol(sdf_fileName, mol2_fileName, verbose=False):
     sys.stderr = stderr
     return mol, problem
 
-
+# checked
 def write_renumbered_sdf(toFile, sdf_fileName, mol2_fileName):
+    """ write renumbered mulecule to .sdf file """
     # read in mol
     mol, _ = read_mol(sdf_fileName, mol2_fileName)
     # reorder the mol atom number as in smiles.
@@ -63,7 +69,6 @@ def write_renumbered_sdf(toFile, sdf_fileName, mol2_fileName):
 
 def get_canonical_smiles(smiles):
     return Chem.MolToSmiles(Chem.MolFromSmiles(smiles))
-
 
 def generate_rdkit_conformation_v2(smiles, n_repeat=50):
     mol = Chem.MolFromSmiles(smiles)
@@ -88,10 +93,11 @@ def generate_rdkit_conformation_v2(smiles, n_repeat=50):
     # mol = Chem.RemoveAllHs(mol)
     return mol
 
-
+# checked
 def binarize(x):
     return torch.where(x > 0, torch.ones_like(x), torch.zeros_like(x))
 
+# checked
 #adj - > n_hops connections adj
 def n_hops_adj(adj, n_hops):
     adj_mats = [torch.eye(adj.size(0), dtype=torch.long, device=adj.device), binarize(adj + torch.eye(adj.size(0), dtype=torch.long, device=adj.device))]
@@ -105,6 +111,7 @@ def n_hops_adj(adj, n_hops):
 
     return extend_mat
 
+# checked
 def get_LAS_distance_constraint_mask(mol):
     # Get the adj
     adj = Chem.GetAdjacencyMatrix(mol)
@@ -124,6 +131,7 @@ def get_LAS_distance_constraint_mask(mol):
     mol_mask = binarize(extend_adj)
     return mol_mask
 
+# Seed_everything(seed=42)
 def Seed_everything(seed=42):
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
@@ -132,8 +140,11 @@ def Seed_everything(seed=42):
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
 
-
+# ckecked
 def get_compound_pair_dis_distribution(coords, LAS_distance_constraint_mask=None):
+    """ one-hot encoded pair-distance of atom in compound (ignore the principle details)
+    return: torch.Size([atom_num, atom_num, 16])
+    """
     pair_dis = scipy.spatial.distance.cdist(coords, coords)
     bin_size=1
     bin_min=-0.5
@@ -150,8 +161,9 @@ def get_compound_pair_dis_distribution(coords, LAS_distance_constraint_mask=None
     pair_dis_distribution = pair_dis_one_hot.float()
     return pair_dis_distribution
 
-
+# checked
 def extract_torchdrug_feature_from_mol(mol, has_LAS_mask=False):
+    """ generate ligand_feature from molecule """
     coords = mol.GetConformer().GetPositions()
     if has_LAS_mask:
         LAS_distance_constraint_mask = get_LAS_distance_constraint_mask(mol)
@@ -177,7 +189,9 @@ three_to_one = {'ALA': 'A', 'CYS': 'C', 'ASP': 'D', 'GLU': 'E', 'PHE': 'F', 'GLY
                 'ILE': 'I', 'LYS': 'K', 'LEU': 'L', 'MET': 'M', 'ASN': 'N', 'PRO': 'P', 'GLN': 'Q', 
                 'ARG': 'R', 'SER': 'S', 'THR': 'T', 'VAL': 'V', 'TRP': 'W', 'TYR': 'Y'}
 
+# checked
 def get_clean_res_list(res_list, verbose=False, ensure_ca_exist=False, bfactor_cutoff=None):
+    """ clean res_list """
     clean_res_list = []
     for res in res_list:
         hetero, resid, insertion = res.full_id[-1]
@@ -197,16 +211,29 @@ def get_clean_res_list(res_list, verbose=False, ensure_ca_exist=False, bfactor_c
                 print(res, res.full_id, "is hetero")
     return clean_res_list
 
-
+# checked
 def get_protein_feature(res_list):
+    """ generate protein_feature from res_list """
     # protein feature extraction code from https://github.com/drorlab/gvp-pytorch
+    
+    ### example: 2r58's res_list
+    ### > 0: ALA 1: PHE 2: ASP 3: TRP 4: ASP 5: ALA ...211: LYS
+    ### type of res_list' element:
+    ### > <class 'Bio.PDB.Residue.Residue'>
+
+    ### res_list[0].child_dict: (ALA: -NH3-CHCH3-CO-)
+    ### {'N': <Atom N>, 'HN1': <Atom HN1>, 'HN2': <Atom HN2>, 'HN3': <Atom HN3>, 'CA': <Atom CA>, 'HA': <Atom HA>, 'C': <Atom C>, 'O': <Atom O>, 'CB': <Atom CB>, 'HB1': <Atom HB1>, 'HB2': <Atom HB2>, 'HB3': <Atom HB3>}
+    
     # ensure all res contains N, CA, C and O
     res_list = [res for res in res_list if (('N' in res) and ('CA' in res) and ('C' in res) and ('O' in res))]
+    
     # construct the input for ProteinGraphDataset
     # which requires name, seq, and a list of shape N * 4 * 3
     structure = {}
     structure['name'] = "placeholder"
     structure['seq'] = "".join([three_to_one.get(res.resname) for res in res_list])
+    ### > 'AFDWDA...K'
+
     coords = []
     for res in res_list:
         res_coords = []
@@ -214,15 +241,24 @@ def get_protein_feature(res_list):
             res_coords.append(list(atom.coord))
         coords.append(res_coords)
     structure['coords'] = coords
+    ### coords of N, CA, C, O atom of each residual
+    ### <list> shape: [res_len, 4, 3] (4: N-CA-C-O; 3: xyz)
+
     torch.set_num_threads(1)        # this reduce the overhead, and speed up the process for me.
     dataset = gvp.data.ProteinGraphDataset([structure])
-    protein = dataset[0]
+    protein = dataset[0] ### ProteinGraphDataset take a list of structure, now we only input 1 element;
     x = (protein.x, protein.seq, protein.node_s, protein.node_v, protein.edge_index, protein.edge_s, protein.edge_v)
+    # torch.Size([212, 3])
+    # torch.Size([212])
+    # torch.Size([212, 6])
+    # torch.Size([212, 3, 3])
+    # torch.Size([2, 6360])
+    # torch.Size([6360, 32])
+    # torch.Size([6360, 1, 3])
     return x
 
-# Seed_everything(seed=42)
-
-# used for testing.
+# checked
+# used for testing
 def remove_hetero_and_extract_ligand(res_list, verbose=False, ensure_ca_exist=False, bfactor_cutoff=None):
     # get all regular protein residues. and ligand.
     clean_res_list = []
@@ -246,12 +282,15 @@ def remove_hetero_and_extract_ligand(res_list, verbose=False, ensure_ca_exist=Fa
                 print(res, res.full_id, "is hetero")
     return clean_res_list, ligand_list
 
+# checked
 def get_res_unique_id(residue):
     pdb, _, chain, (_, resid, insertion) = residue.full_id
     unique_id = f"{chain}_{resid}_{insertion}"
     return unique_id
 
+# checked
 def save_cleaned_protein(c, proteinFile):
+    """ write cleaned protein to proteinFile """
     res_list = list(c.get_residues())
     clean_res_list, ligand_list = remove_hetero_and_extract_ligand(res_list)
     res_id_list = set([get_res_unique_id(residue) for residue in clean_res_list])
@@ -267,7 +306,11 @@ def save_cleaned_protein(c, proteinFile):
     io.save(proteinFile, MySelect())
     return clean_res_list, ligand_list
 
+# checked
 def split_protein_and_ligand(c, pdb, ligand_seq_id, proteinFile, ligandFile):
+    """ split protein and ligand from .pdb file
+    write to proteinFile and ligandFile
+    """
     clean_res_list, ligand_list = save_cleaned_protein(c, proteinFile)
     chain = c.id
     # should take a look of this ligand_list to ensure we choose the right ligand.
@@ -290,6 +333,7 @@ def generate_conformation(mol):
     mol = Chem.RemoveHs(mol)
     return mol
 
+# checked
 def write_with_new_coords(mol, new_coords, toFile):
     # put this new coordinates into the sdf file.
     w = Chem.SDWriter(toFile)
@@ -301,7 +345,9 @@ def write_with_new_coords(mol, new_coords, toFile):
     w.write(mol)
     w.close()
 
+# checked
 def generate_sdf_from_smiles_using_rdkit(smiles, rdkitMolFile, shift_dis=30, fast_generation=False):
+    """ get .sdf from smile """
     mol_from_rdkit = Chem.MolFromSmiles(smiles)
     if fast_generation:
         # conformation generated using Compute2DCoords is very fast, but less accurate.
@@ -312,7 +358,9 @@ def generate_sdf_from_smiles_using_rdkit(smiles, rdkitMolFile, shift_dis=30, fas
     new_coords = coords + np.array([shift_dis, shift_dis, shift_dis])
     write_with_new_coords(mol_from_rdkit, new_coords, rdkitMolFile)
 
+# checked
 def select_chain_within_cutoff_to_ligand_v2(x):
+    """ write removed_extra_chain_protein to file """
     # pdbFile = f"/pdbbind2020/pdbbind_files/{pdb}/{pdb}_protein.pdb"
     # ligandFile = f"/pdbbind2020/renumber_atom_index_same_as_smiles/{pdb}.sdf"
     # toFile = f"{toFolder}/{pdb}_protein.pdb"

@@ -7,16 +7,19 @@ import torch.nn.functional as F
 import torch_geometric
 import torch_cluster
 
+# checked
 def _normalize(tensor, dim=-1):
     '''
+    ### turn vector to unit vector
     Normalizes a `torch.Tensor` along dimension `dim` without `nan`s.
     '''
     return torch.nan_to_num(
         torch.div(tensor, torch.norm(tensor, dim=dim, keepdim=True)))
 
-
+# checked
 def _rbf(D, D_min=0., D_max=20., D_count=16, device='cpu'):
     '''
+    ### ignore what does RBF mean
     From https://github.com/jingraham/neurips19-graph-protein-design
     
     Returns an RBF embedding of `torch.Tensor` `D` along a new axis=-1.
@@ -112,6 +115,7 @@ class BatchSampler(data.Sampler):
         if not self.batches: self._form_batches()
         for batch in self.batches: yield batch
 
+# checked
 class ProteinGraphDataset(data.Dataset):
     '''
     A map-syle `torch.utils.data.Dataset` which transforms JSON/dictionary-style
@@ -134,6 +138,7 @@ class ProteinGraphDataset(data.Dataset):
     :param data_list: JSON/dictionary-style protein dataset as described in README.md.
     :param num_positional_embeddings: number of positional embeddings
     :param top_k: number of edges to draw per node (as destination node)
+    :param num_rbf: don't know what it is, but is consist with num_positional_embeddings
     :param device: if "cuda", will do preprocessing on the GPU
     '''
     def __init__(self, data_list, 
@@ -159,28 +164,68 @@ class ProteinGraphDataset(data.Dataset):
     
     def __getitem__(self, i): return self._featurize_as_graph(self.data_list[i])
     
+    # checked
     def _featurize_as_graph(self, protein):
+        """ example: 2r58
+            {'name': 'placeholder',
+            'seq': 'AFD',
+            'coords': [
+                [[-7.944, -13.999, -13.127],
+            [-7.65, -13.176, -14.296],
+            [-7.469, -14.074, -15.54],
+            [-6.597, -14.953, -15.574]],
+                [[-8.307, -13.836, -16.55],
+            [-8.332, -14.639, -17.768],
+            [-7.162, -14.291, -18.684],
+            [-6.933, -13.117, -18.99]],
+                [[-6.429, -15.321, -19.111],
+            [-5.245, -15.139, -19.945],
+            [-5.65, -14.904, -21.401],
+            [-5.669, -15.827, -22.227]],
+                ...
+            ]}
+        """
         name = protein['name']
         with torch.no_grad():
             coords = torch.as_tensor(protein['coords'], 
                                      device=self.device, dtype=torch.float32)   
             seq = torch.as_tensor([self.letter_to_num[a] for a in protein['seq']],
                                   device=self.device, dtype=torch.long)
-            
+            ### > 'AFDWDA...K' -> tensor([ 0, 13,  3, 17,  3,  0, 18, ..., 11])
+
+            ### in case there has NOT finite value
             mask = torch.isfinite(coords.sum(dim=(1,2)))
             coords[~mask] = np.inf
-            
+
+            ### X_ca: coords of CA
             X_ca = coords[:, 1]
+            ### > torch.Size([212, 3])
+
+            ### link each node with the top_k(default: 30) nearest neighbors
             edge_index = torch_cluster.knn_graph(X_ca, k=self.top_k)
-            
-            pos_embeddings = self._positional_embeddings(edge_index)
+            ### > torch.Size([2, 6360])
+
+            ### edge_v: vector feature of edge (to be unified)
+            ### [AF, FA, AD, DA, FD, DF, ...]
             E_vectors = X_ca[edge_index[0]] - X_ca[edge_index[1]]
+            ### > torch.Size([6360, 3])
+
+            ### two parts of edge_s: scale feature of edge
+            pos_embeddings = self._positional_embeddings(edge_index)
+            ### > torch.Size([6360, 16])
             rbf = _rbf(E_vectors.norm(dim=-1), D_count=self.num_rbf, device=self.device)
-            
-            dihedrals = self._dihedrals(coords)                     
+            ### > torch.Size([6360, 16])
+
+            ### node_s: scale feature of node
+            dihedrals = self._dihedrals(coords)
+            ### > torch.Size([212, 6])
+
+            ### two part of node_v: vector feature of node
             orientations = self._orientations(X_ca)
+            ### > torch.Size([212, 2, 3])
             sidechains = self._sidechains(coords)
-            
+            ### > torch.Size([212, 3])
+
             node_s = dihedrals
             node_v = torch.cat([orientations, sidechains.unsqueeze(-2)], dim=-2)
             edge_s = torch.cat([rbf, pos_embeddings], dim=-1)
@@ -193,39 +238,60 @@ class ProteinGraphDataset(data.Dataset):
                                          node_s=node_s, node_v=node_v,
                                          edge_s=edge_s, edge_v=edge_v,
                                          edge_index=edge_index, mask=mask)
+        ### > Data(x=[212, 3], edge_index=[2, 6360], seq=[3], name='placeholder',
+        #            node_s=[212, 6], node_v=[212, 3, 3],
+        #            edge_s=[6360, 32], edge_v=[6360, 1, 3], mask=[212])
         return data
-                                
+
+    # checked                         
     def _dihedrals(self, X, eps=1e-7):
+        """ compute dihedrals information of each Residual's backbone 
+        return: torch.Size([res_num, 6])
+        """
         # From https://github.com/jingraham/neurips19-graph-protein-design
         
-        X = torch.reshape(X[:, :3], [3*X.shape[0], 3])
-        dX = X[1:] - X[:-1]
-        U = _normalize(dX, dim=-1)
+        X = torch.reshape(X[:, :3], [3*X.shape[0], 3])  ### discard atom O, which is NOT in backbone
+        dX = X[1:] - X[:-1] ### atomic bond vector
+        U = _normalize(dX, dim=-1)  ### unified atomic bond vector
         u_2 = U[:-2]
         u_1 = U[1:-1]
         u_0 = U[2:]
 
         # Backbone normals
+        ### compute normal vector of plane (determined by 2 atomic bond)
+        ### formula: normal_V = V1 × V2
         n_2 = _normalize(torch.cross(u_2, u_1), dim=-1)
         n_1 = _normalize(torch.cross(u_1, u_0), dim=-1)
 
         # Angle between normals
+        ### compute dihedrals between two plane
+        ### formula: cos(theta) = V1*V2 / (|V1|*|V2|)
         cosD = torch.sum(n_2 * n_1, -1)
-        cosD = torch.clamp(cosD, -1 + eps, 1 - eps)
-        D = torch.sign(torch.sum(u_2 * n_1, -1)) * torch.acos(cosD)
+        cosD = torch.clamp(cosD, -1 + eps, 1 - eps) ### restrict range
+
+        ### compute arc_cos() and determine sign of angle
+        D = torch.sign(torch.sum(u_2 * n_1, -1)) * torch.acos(cosD) 
 
         # This scheme will remove phi[0], psi[-1], omega[-1]
-        D = F.pad(D, [1, 2]) 
-        D = torch.reshape(D, [-1, 3])
+        D = F.pad(D, [1, 2])    ### pad head and tail with 0
+        D = torch.reshape(D, [-1, 3])   ### 3 dihedrals as a group of a residual
+        ### > torch.Size([res_num, 3])
+
         # Lift angle representations to the circle
         D_features = torch.cat([torch.cos(D), torch.sin(D)], 1)
+        ### cos & sin of each 3 dihedrals
+        ### > torch.Size([res_num, 6])
         return D_features
     
-    
+    # checked
     def _positional_embeddings(self, edge_index, 
                                num_embeddings=None,
                                period_range=[2, 1000]):
-        # From https://github.com/jingraham/neurips19-graph-protein-design
+        """ encode positional information of edge, ignore the principle details
+        (think about the positional encoding in transformer)
+        return: torch.Size([edges_num, 16])
+        """
+        # From https://github.com/jingraham/neurips19-graph-protein-design 
         num_embeddings = num_embeddings or self.num_positional_embeddings
         d = edge_index[0] - edge_index[1]
      
@@ -237,14 +303,22 @@ class ProteinGraphDataset(data.Dataset):
         E = torch.cat((torch.cos(angles), torch.sin(angles)), -1)
         return E
 
+    # checked
     def _orientations(self, X):
+        """ generate source_v & destination_v of each node 
+        return: torch.Size([res_num, 2, 3])
+        """
         forward = _normalize(X[1:] - X[:-1])
         backward = _normalize(X[:-1] - X[1:])
         forward = F.pad(forward, [0, 0, 0, 1])
         backward = F.pad(backward, [0, 0, 1, 0])
         return torch.cat([forward.unsqueeze(-2), backward.unsqueeze(-2)], -2)
 
+    # checked
     def _sidechains(self, X):
+        """ generate another vector feature of each node, ignore principle details
+        return: torch.Size([res_num, 3])
+        """
         n, origin, c = X[:, 0], X[:, 1], X[:, 2]
         c, n = _normalize(c - origin), _normalize(n - origin)
         bisector = _normalize(c + n)

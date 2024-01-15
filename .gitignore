@@ -8,3 +8,5 @@ pdbbind2020/
 packages/
 /examples/predictions/
 /examples/single_PDB_6hd6/
+
+/demo.ipynb

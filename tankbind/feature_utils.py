@@ -67,9 +67,11 @@ def write_renumbered_sdf(toFile, sdf_fileName, mol2_fileName):
     w.write(mol)
     w.close()
 
+# neglected
 def get_canonical_smiles(smiles):
     return Chem.MolToSmiles(Chem.MolFromSmiles(smiles))
 
+# neglected
 def generate_rdkit_conformation_v2(smiles, n_repeat=50):
     mol = Chem.MolFromSmiles(smiles)
     # mol = Chem.RemoveAllHs(mol)
@@ -322,6 +324,7 @@ def split_protein_and_ligand(c, pdb, ligand_seq_id, proteinFile, ligandFile):
     open(ligandFile , 'wb').write(r.content)
     return clean_res_list, ligand_list
 
+# checked
 def generate_conformation(mol):
     mol = Chem.AddHs(mol)
     ps = AllChem.ETKDGv2()

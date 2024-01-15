@@ -1,3 +1,4 @@
+# checked
 import json
 import numpy as np
 import tqdm, random
@@ -34,7 +35,7 @@ def _rbf(D, D_min=0., D_max=20., D_count=16, device='cpu'):
     RBF = torch.exp(-((D_expand - D_mu) / D_sigma) ** 2)
     return RBF
 
-
+# neglected
 class CATHDataset:
     '''
     Loader and container class for the CATH 4.2 dataset downloaded
@@ -72,7 +73,8 @@ class CATHDataset:
                 self.val.append(entry)
             elif name in test_list:
                 self.test.append(entry)
-                                
+
+# neglected                           
 class BatchSampler(data.Sampler):
     '''
     From https://github.com/jingraham/neurips19-graph-protein-design.

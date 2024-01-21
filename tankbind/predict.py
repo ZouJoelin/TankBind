@@ -76,11 +76,12 @@ global_test_loader = None
 
 if args.data == "1":
     logging.info(f"protein feature GVP, compound feature torchdrug. ligand conformation generated using RDKit")
-    new_dataset = TankBindDataSet("./dataset/apr23_testset_pdbbind_gvp_pocket_radius20/", proteinMode=0, compoundMode=1, pocket_radius=20, predDis=True)
+    new_dataset = TankBindDataSet("/home/zoujl/TankBind/pdbbind2020/dataset/", proteinMode=0, compoundMode=1, pocket_radius=20, predDis=True)
     new_dataset.compound_dict = torch.load("./dataset/pdbbind_test_compound_dict_based_on_rdkit.pt")
     valid = new_dataset
     test = new_dataset
-    info = pd.read_csv("./dataset/apr23_testset_pdbbind_gvp_pocket_radius20_info.csv", index_col=0)
+    ### To Be Generated...
+    info = pd.read_csv("/home/zoujl/TankBind/pdbbind2020/tankbind_datainfo.csv", index_col=0)
 
 
 logging.info(f"data point, valid: {len(valid)}, test: {len(test)}")

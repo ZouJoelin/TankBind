@@ -1,3 +1,4 @@
+# checked
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -41,6 +42,8 @@ parser.add_argument("-d", "--data", type=str, default="0",
                     help="data specify the data to use.")
 parser.add_argument("--batch_size", type=int, default=8,
                     help="batch size.")
+parser.add_argument("--epoch_num", type=int, default=200,
+                    help="training epoch.")
 parser.add_argument("--sample_n", type=int, default=20000,
                     help="number of samples in one epoch.")
 parser.add_argument("--restart", type=str, default=None,
@@ -130,11 +133,14 @@ valid_loader = DataLoader(valid, batch_size=valid_batch_size, follow_batch=['x',
 test_loader = DataLoader(test, batch_size=test_batch_size, follow_batch=['x', 'compound_pair'], shuffle=False, pin_memory=False, num_workers=num_workers)
 all_pocket_test_loader = DataLoader(all_pocket_test, batch_size=2, follow_batch=['x', 'compound_pair'], shuffle=False, pin_memory=False, num_workers=4)
 
+### prepare tankbind model...
 # import model is put here due to an error related to torch.utils.data.ConcatDataset after importing torchdrug.
 from model import *
 device = 'cuda'
 model = get_model(args.mode, logging, device)
 
+### actually mean use pre-train model, NOT restart
+### default: None
 if args.restart:
     model.load_state_dict(torch.load(args.restart))
 optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
@@ -163,7 +169,8 @@ data_warmup_epochs = args.data_warm_up_epochs
 warm_up_epochs = args.warm_up_epochs
 logging.info(f"warming up epochs: {warm_up_epochs}, data warming up epochs: {data_warmup_epochs}")
 
-for epoch in range(200):
+for epoch in range(args.epoch_num):
+    ### training
     model.train()
     y_list = []
     y_pred_list = []
@@ -171,8 +178,10 @@ for epoch in range(200):
     affinity_pred_list = []
     batch_loss = 0.0
     affinity_batch_loss = 0.0
+    ### use train first: native && group==train
     if epoch < data_warmup_epochs:
         data_it = tqdm(train_loader)
+    ### then use train_after_warm_up: group==train
     else:
         data_it = tqdm(train_after_warm_up_loader)
 
@@ -335,22 +344,21 @@ for epoch in range(200):
     test_metrics_list.append(metrics)
     logging.info(f"epoch {epoch:<4d}, test,  " + print_metrics(metrics))
 
-
     # saveFileName = f"{pre}/results/single_epoch_{epoch}.pt"
     # metrics = evaulate_with_affinity(all_pocket_test_loader, model, criterion, affinity_criterion, args.relative_k,
     #                                     device, pred_dis=pred_dis, info=info, saveFileName=saveFileName)
     # logging.info(f"epoch {epoch:<4d}, single," + print_metrics(metrics))
 
+    ### save model.pt each epoch
     if epoch % 1 == 0:
         torch.save(model.state_dict(), f"{pre}/models/epoch_{epoch}.pt")
-    # torch.save((y, y_pred), f"{pre}/results/epoch_{epoch}.pt")
+
     if epoch_not_improving > 100:
         # early stop.
         print("early stop")
         break
     
     # torch.cuda.empty_cache()
-    os.system(f"cp {timestamp}.log {pre}/")
 
 ### save metrics of training, validating and testing
 torch.save((metrics_list, valid_metrics_list, test_metrics_list), f"{pre}/metrics.pt")

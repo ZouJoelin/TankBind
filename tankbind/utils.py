@@ -1,4 +1,4 @@
-
+# checked
 import torch
 from metrics import *
 import numpy as np
@@ -162,13 +162,17 @@ def construct_data_from_graph_gvp(protein_node_xyz, protein_seq, protein_node_s,
         data['compound', 'c2c', 'compound'].edge_attr = input_atom_edge_attr_list
     return data, input_node_xyz, keepNode
 
-
+# checked
 def my_affinity_criterion(y_pred, y, mask, decoy_gap=1.0):
+    """compute max-margin constrastive affinity loss, which is mentioned in paper"""
+    # print(f"y: {y}")
+    # print(f"mask: {mask}")
     affinity_loss = torch.zeros(y_pred.shape).to(y_pred.device)
     affinity_loss[mask] = (((y_pred - y)**2)[mask])
     affinity_loss[~mask] = (((y_pred - (y - decoy_gap)).relu())**2)[~mask]
     return affinity_loss.mean()
 
+# neglected
 def evaulate(data_loader, model, criterion, device, saveFileName=None):
     y_list = []
     y_pred_list = []
@@ -190,14 +194,21 @@ def evaulate(data_loader, model, criterion, device, saveFileName=None):
         torch.save((y, y_pred), saveFileName)
     return metrics
 
+# checked
 def is_ligand_pocket(pdb):
+    """ if pdb string refers to known ligand-binding pocket. for examle:
+    Known ligand-binding pocket: 2r58;
+    Unkonwn ligand-binding pocket: 2r58_c, 2r58_0, 2r58_1, ..."""
     if len(pdb) == 4:
         return True
     else:
         return False
     
-
+# checked
 def select_pocket_by_predicted_affinity(info):
+    """ select the highest affinity pocket row in info
+    return: DataFrame
+    """
     info['is_ligand_pocket'] = info.pdb.apply(lambda x:is_ligand_pocket(x))
     pdb_to_num_contact = info.query("is_ligand_pocket").set_index("pdb")['num_contact'].to_dict()
     info['base_pdb'] = info.pdb.apply(lambda x: x.split("_")[0])
@@ -209,11 +220,15 @@ def select_pocket_by_predicted_affinity(info):
                       'affinity_pred']).groupby("base_pdb").tail(1).sort_values("index").reset_index(drop=True)
     return selected
 
-
+# checked
 def compute_numpy_rmse(x, y):
+    """ Root Mean Square Error"""
     return np.sqrt(((x - y)**2).mean())
 
+# checked
 def extract_list_from_prediction(info, y, y_pred, selected=None, smiles_to_mol_dict=None, coords_generated_from_smiles=False):
+    """ seperate batched y & y_pred, because torch_geometric Dataloader wil stack 
+    whole batch tensor together, therefore the model output is also assembled"""
     idx = 0
     y_list = []
     y_pred_list = []
@@ -228,7 +243,11 @@ def extract_list_from_prediction(info, y, y_pred, selected=None, smiles_to_mol_d
     d = (y_list, y_pred_list)
     return d
 
+# checked
 def evaulate_with_affinity(data_loader, model, criterion, affinity_criterion, relative_k, device, pred_dis=False, info=None, saveFileName=None, use_y_mask=False, skip_y_metrics_evaluation=False):
+    """ run the model compactly
+    return: metrics of prediction
+    """
     y_list = []
     y_pred_list = []
     affinity_list = []
@@ -285,6 +304,7 @@ def evaulate_with_affinity(data_loader, model, criterion, affinity_criterion, re
     metrics = {"loss":batch_loss/len(y_pred) + affinity_batch_loss/len(affinity_pred)}
     metrics.update({"y loss":(batch_loss/len(y_pred))})
     metrics.update({"affinity loss":(affinity_batch_loss/len(affinity_pred))})
+    ### info: deafule None
     if info is not None:
         # print(affinity, affinity_pred)
         info['affinity'] = affinity.cpu().numpy()
@@ -313,11 +333,13 @@ def evaulate_with_affinity(data_loader, model, criterion, affinity_criterion, re
             # cover ratio, CR.
             result[f'CR_{i}'] = (selected.cover_contact_ratio > i / 100).sum() / len(selected)
         metrics.update(result)
+    ### skip_y_metrics_evaluation: defaule False
     if not skip_y_metrics_evaluation:
         metrics.update(myMetric(y_pred, y, threshold=threshold))
     metrics.update(affinity_metrics(affinity_pred, affinity))
     return metrics
 
+# neglected
 def evaulate_affinity_only(data_loader, model, criterion, affinity_criterion, relative_k, device, info=None, saveFileName=None, use_y_mask=False):
     y_list = []
     y_pred_list = []

@@ -1,10 +1,12 @@
-
+# checked
 import torchmetrics
 import torch
 from torch import nn
 import pandas as pd
 
+# checked
 def myMetric(y_pred, y, threshold=0.5):
+    ### y_pred is already refer to contact now, rather than distance
     y = y.float()
     criterion = nn.BCELoss()
     with torch.no_grad():
@@ -28,12 +30,13 @@ def myMetric(y_pred, y, threshold=0.5):
            "recall_1":recall_1, "f1_1":f1_1,"precision_0":precision_0,
            "recall_0":recall_0, "f1_0":f1_0}
 
+# checked
 def affinity_metrics(affinity_pred, affinity):
     pearson = torchmetrics.functional.pearson_corrcoef(affinity_pred, affinity)
     rmse = torchmetrics.functional.mean_squared_error(affinity_pred, affinity, squared=False)
     return {"pearson":pearson, "rmse":rmse}
     
-
+# checked
 def print_metrics(metrics):
     out_list = []
     for key in metrics:
@@ -41,7 +44,7 @@ def print_metrics(metrics):
     out = ", ".join(out_list)
     return out
 
-
+# neglected
 def compute_individual_metrics(pdb_list, inputFile_list, y_list):
     r_ = []
     for i in range(len(pdb_list)):

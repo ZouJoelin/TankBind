@@ -49,6 +49,7 @@ parser.add_argument("--addNoise", type=str, default=None,
                     help="shift the location of the pocket center in each training sample \
                     such that the protein pocket encloses a slightly different space.")
 
+### either use_y_mask or use_equivalent_native_y_mask
 pair_interaction_mask = parser.add_mutually_exclusive_group()
 # use_equivalent_native_y_mask is probably a better choice.
 pair_interaction_mask.add_argument("--use_y_mask", action='store_true',
@@ -63,7 +64,7 @@ parser.add_argument("--use_affinity_mask", type=int, default=0,
 parser.add_argument("--affinity_loss_mode", type=int, default=1,
                     help="define which affinity loss function to use.")
 parser.add_argument("--decoy_gap", type=int, default=1,
-                    help="define deocy gap used in args.affinity_loss_mode=1")
+                    help="define deocy margin value used in computing max-margin constrastive affinity loss when args.affinity_loss_mode=1")
 
 parser.add_argument("--pred_dis", type=int, default=1,
                     help="pred distance map or predict contact map.")
@@ -138,9 +139,13 @@ if args.restart:
     model.load_state_dict(torch.load(args.restart))
 optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
 # model.train()
+
+### predict distance_map
+### default: 1
 if args.pred_dis:
     criterion = nn.MSELoss()
     pred_dis = True
+### predict contact_map(0/1) based on distance
 else:
     criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(args.posweight))
 
@@ -189,6 +194,12 @@ for epoch in range(200):
         y = data.y
         affinity = data.affinity
         dis_map = data.dis_map
+        ### backup original affinity, for use of later my_affinity_criterion()
+        affinity_pred_ori, affinity_ori = affinity_pred, affinity
+
+        ### choose meaningful y, dis_map, y_pred
+        ### either use_equivalent_native_y_mask or use_y_mask
+        ### y_pred, y, dis_map either all kept, or empty.
         if args.use_equivalent_native_y_mask:
             y_pred = y_pred[data.equivalent_native_y_mask]
             y = y[data.equivalent_native_y_mask]
@@ -198,72 +209,108 @@ for epoch in range(200):
             y = y[data.real_y_mask]
             dis_map = dis_map[data.real_y_mask]
 
+        ### choose meaningful affinity, affinity_pred
+        ### default: 0
+        ### real_affinity_mask is True only if is real docking pocket
         if args.use_affinity_mask:
             affinity_pred = affinity_pred[data.real_affinity_mask]
             affinity = affinity[data.real_affinity_mask]
 
+        ### specifiy what y_pred predicts
+        ### default: 1
         if args.pred_dis:
+            ### y_pred predictes distance_map 
             contact_loss = criterion(y_pred, dis_map) if len(dis_map) > 0 else torch.tensor([0]).to(dis_map.device)
         else:
+            ### y_pred predictes contact_map 
             contact_loss = criterion(y_pred, y) if len(y) > 0 else torch.tensor([0]).to(y.device)
             y_pred = y_pred.sigmoid()
+
+        ### get relative_k (max = 0.01) weight of affinity_loss in total loss
+        ### restart: default None 
         if args.restart is None:
+            ### relative_k: default 0.01
             base_relative_k = args.relative_k
+            ### relative_k_mode: default 0 
             if args.relative_k_mode == 0:
-                # increase exponentially. reach base_relative_k at epoch = warm_up_epochs.
+                ### warm_up_epochs: default 15
+                # increase exponentially, reach base_relative_k at epoch = warm_up_epochs.
                 relative_k = min(base_relative_k * (2**epoch) / (2**warm_up_epochs), base_relative_k)
             if args.relative_k_mode == 1:
-                # increase linearly
-                relative_k = min(base_relative_k / warm_up_epochs * epoch, base_relative_k)
-
+                # increase linearly, reach base_relative_k at epoch = warm_up_epochs.
+                relative_k = min(base_relative_k * epoch / warm_up_epochs, base_relative_k)
         else:
             relative_k = args.relative_k
+
+        # affinity_loss_mode: default 1
         if args.affinity_loss_mode == 0:
+            ### use nn.MSELoss()
             affinity_loss = relative_k * affinity_criterion(affinity_pred, affinity)
         elif args.affinity_loss_mode == 1:
+            ### ues self-defined max-margin constrastive affinity loss, which is mentioned in paper
             native_pocket_mask = data.is_equivalent_native_pocket
-            affinity_loss =  relative_k * my_affinity_criterion(affinity_pred,
-                                                                affinity, 
+            ### decoy_gap: default 1
+            affinity_loss =  relative_k * my_affinity_criterion(affinity_pred_ori,
+                                                                affinity_ori, 
                                                                 native_pocket_mask, decoy_gap=args.decoy_gap)
 
+        ### back-prop
         # print(contact_loss.item(), affinity_loss.item())
         loss = contact_loss + affinity_loss
         loss.backward()
         optimizer.step()
+
+        ### record loss, pred, actual_label
+        ### batch mean all single num, for example, len(y_pred)=len(y_pred[0])+len(y_pred[1])+len(y_pred[1])...
         batch_loss += len(y_pred)*contact_loss.item()
         affinity_batch_loss += len(affinity_pred)*affinity_loss.item()
         # print(f"{loss.item():.3}")
+        
+        ### record pred & actual label
         y_list.append(y)
         y_pred_list.append(y_pred.detach())
-        affinity_list.append(data.affinity)
+        affinity_list.append(affinity)
         affinity_pred_list.append(affinity_pred.detach())
         # torch.cuda.empty_cache()
 
+    ### process y_pred
     y = torch.cat(y_list)
     y_pred = torch.cat(y_pred_list)
     # print(y.min(), y.max())
     # print(y_pred.min(), y_pred.max())
     if args.pred_dis:
+        ### uniform y_pred to 0~1, which could denote contact
+        ### y_pred: distance (around 0 ~ 10)
         y_pred = torch.clip(1 - (y_pred / 10.0), min=1e-6, max=0.99999)
         # we define 8A as the cutoff for contact, therefore, contact_threshold will be 1 - 8/10 = 0.2
         contact_threshold = 0.2
     else:
         contact_threshold = 0.5
 
+    ### process affinity_pred
     affinity = torch.cat(affinity_list)
     affinity_pred = torch.cat(affinity_pred_list)
+
+    ### collection of accuracy metrics
     metrics = {"loss":batch_loss/len(y_pred) + affinity_batch_loss/len(affinity_pred)}
     # torch.cuda.empty_cache()
+    ### self-defined y_pred accuracy
+    ### y_pred is already refer to contact now, rather than distance
     metrics.update(myMetric(y_pred, y, threshold=contact_threshold))
+    ### self-defined affinity_pred accuracy
     metrics.update(affinity_metrics(affinity_pred, affinity))
+    
     logging.info(f"epoch {epoch:<4d}, train, " + print_metrics(metrics))
     metrics_list.append(metrics)
     # print(metrics_list)
+
     # release memory
     y = None
     y_pred = None
     # torch.cuda.empty_cache()
     model.eval()
+
+    ### validating
     use_y_mask = args.use_equivalent_native_y_mask or args.use_y_mask
     metrics = evaulate_with_affinity(valid_loader, model, criterion, affinity_criterion, args.relative_k, device, pred_dis=pred_dis, use_y_mask=use_y_mask)
     if metrics["auroc"] <= best_auroc and metrics['f1_1'] <= best_f1_1:
@@ -280,6 +327,8 @@ for epoch in range(200):
     valid_metrics_list.append(metrics)
     logging.info(f"epoch {epoch:<4d}, valid, " + print_metrics(metrics) + ending_message)
 
+    ### testing
+    ### save predicted & actual y and affinity each epoch in evaulate_with_affinity()
     saveFileName = f"{pre}/results/epoch_{epoch}.pt"
     metrics = evaulate_with_affinity(test_loader, model, criterion, affinity_criterion, args.relative_k,
                                         device, pred_dis=pred_dis, saveFileName=saveFileName, use_y_mask=use_y_mask)
@@ -303,4 +352,5 @@ for epoch in range(200):
     # torch.cuda.empty_cache()
     os.system(f"cp {timestamp}.log {pre}/")
 
+### save metrics of training, validating and testing
 torch.save((metrics_list, valid_metrics_list, test_metrics_list), f"{pre}/metrics.pt")

@@ -23,6 +23,7 @@ import argparse
 from torch.utils.data import RandomSampler
 from torch.utils.data import WeightedRandomSampler
 import random
+
 def Seed_everything(seed=42):
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
@@ -77,22 +78,26 @@ parser.add_argument("--warm_up_epochs", type=int, default=15,
                     help="used in combination with relative_k_mode.")
 parser.add_argument("--data_warm_up_epochs", type=int, default=0,
                     help="option to switch training data after certain epochs.")
-
-# parser.add_argument("--resultFolder", type=str, default="../",
-#                     help="information you want to keep a record.")
-parser.add_argument("--resultFolder", type=str, default="./result/",
+parser.add_argument("--output_folder", type=str, default="../tankbind_output/",
                     help="information you want to keep a record.")
 parser.add_argument("--label", type=str, default="",
                     help="information you want to keep a record.")
 
 args = parser.parse_args()
 
-
 timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M")
+
+pre = f"{args.output_folder}/{timestamp}"
+os.system(f"mkdir -p {pre}/models")
+os.system(f"mkdir -p {pre}/results")
+### save sorce code each run
+os.system(f"mkdir -p {pre}/src")
+os.system(f"cp *.py {pre}/src/")
+os.system(f"cp -r gvp {pre}/src/")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("")
-handler = logging.FileHandler(f'{timestamp}.log')
+handler = logging.FileHandler(f'{pre}/{timestamp}.log')
 handler.setFormatter(logging.Formatter('%(message)s', ""))
 logger.addHandler(handler)
 
@@ -102,25 +107,19 @@ logging.info(f'''\
 {args.label}
 --------------------------------
 ''')
-pre = f"{args.resultFolder}/{timestamp}"
-os.system(f"mkdir -p {pre}/models")
-os.system(f"mkdir -p {pre}/results")
-os.system(f"mkdir -p {pre}/src")
-os.system(f"cp *.py {pre}/src/")
-os.system(f"cp -r gvp {pre}/src/")
-
 
 torch.set_num_threads(1)
 # # ----------without this, I could get 'RuntimeError: received 0 items of ancdata'-----------
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 
-
-
+### prepare TankbindDataset...
+### train, train_after_warm_up, valid, test, all_pocket_test: TankbindDataset
 train, train_after_warm_up, valid, test, all_pocket_test, info = get_data(args.data, logging, addNoise=args.addNoise)
 logging.info(f"data point train: {len(train)}, train_after_warm_up: {len(train_after_warm_up)}, valid: {len(valid)}, test: {len(test)}")
 
 num_workers = 10
+#### torch_geometric Dataloader wil stack whole batch tensor together
 sampler = RandomSampler(train, replacement=True, num_samples=args.sample_n)
 train_loader = DataLoader(train, batch_size=args.batch_size, follow_batch=['x', 'compound_pair'], sampler=sampler, pin_memory=False, num_workers=num_workers)
 sampler2 = RandomSampler(train_after_warm_up, replacement=True, num_samples=args.sample_n)
@@ -176,6 +175,16 @@ for epoch in range(200):
         data = data.to(device)
         optimizer.zero_grad()
         y_pred, affinity_pred = model(data)
+
+        ### torch_geometric Dataloader wil stack whole batch together
+        # print(f"type(data): {type(data)}")
+        # print(f"data.shape: {(len(data))}")
+        
+        # print(f"type(y_pred): {type(y_pred)}")
+        # print(f"y_pred.shape: {(y_pred.shape)}")
+        # print(f"type(affinity_pred): {type(affinity_pred)}")
+        # print(f"affinity_pred.shape: {(affinity_pred.shape)}")
+
         # print(data.y.sum(), y_pred.sum())
         y = data.y
         affinity = data.affinity

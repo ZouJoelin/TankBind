@@ -1,3 +1,4 @@
+# checked
 import pandas as pd
 import numpy as np
 import torch
@@ -152,15 +153,19 @@ class TankBindDataSet(Dataset):
         ### all True if data is the native row, else all False
         data.real_y_mask = torch.ones(data.y.shape).bool() if use_compound_com else torch.zeros(data.y.shape).bool()
         # fract_of_native_contact = float(line['fract_of_native_contact']) if "fract_of_native_contact" in line.index else 1
+        
         # equivalent native pocket
         if "native_num_contact" in line.index:
+            ### (data.y.numpy() > 0).sum(): num_contact
+            ### fract_of_native_contact = num_contact / native_num_contact
             fract_of_native_contact = (data.y.numpy() > 0).sum() / float(line['native_num_contact'])
+            ### whether this data row refer to native docking pocket. True if fract_of_native_contact >= 90%
             is_equivalent_native_pocket = fract_of_native_contact >= 0.9
             data.is_equivalent_native_pocket = torch.tensor([is_equivalent_native_pocket], dtype=torch.bool)
             data.equivalent_native_y_mask = torch.ones(data.y.shape).bool() if is_equivalent_native_pocket else torch.zeros(data.y.shape).bool()
         else:
             # native_num_contact information is not available.
-            # use ligand com to determine if this pocket is equivalent to native pocket.
+            # use ligand com to determine whether this pocket is equivalent to native pocket.
             if "ligand_com" in line.index:
                 ligand_com = line["ligand_com"]
                 pocket_com = data.node_xyz.numpy().mean(axis=0)
@@ -175,33 +180,39 @@ class TankBindDataSet(Dataset):
         
         return data
 
-
+# checked
 def get_data(data_mode, logging, addNoise=None):
-    pre = "./"
+    pre = "/home/zoujl/TankBind/pdbbind2020/"
+    ### default
     if data_mode == "0":
-        logging.info(f"re-docking, using dataset: apr22_pdbbind_gvp_pocket_radius20 pred distance map.")
+        logging.info(f"re-docking, using dataset: pdbbind2020_refined_set pred distance map.")
         logging.info(f"compound feature based on torchdrug")
         add_noise_to_com = float(addNoise) if addNoise else None
 
         # compoundMode = 1 is for GIN model.
-        new_dataset = TankBindDataSet(f"{pre}/apr22_pdbbind_gvp_pocket_radius20", add_noise_to_com=add_noise_to_com)
+        new_dataset = TankBindDataSet(f"{pre}/dataset", add_noise_to_com=add_noise_to_com)
         # load compound features extracted using torchdrug.
         # new_dataset.compound_dict = torch.load(f"{pre}/compound_dict.pt")
         new_dataset.data = new_dataset.data.query("c_length < 100 and native_num_contact > 5").reset_index(drop=True)
         d = new_dataset.data
+        ### train: native && group==train
         only_native_train_index = d.query("use_compound_com and group =='train'").index.values
         train = new_dataset[only_native_train_index]
+        ### train_after_warm_up: group==train
         train_index = d.query("group =='train'").index.values
         train_after_warm_up = new_dataset[train_index]
         # train = torch.utils.data.ConcatDataset([train1, train2])
+        ### valid: native && group==valid
         valid_index = d.query("use_compound_com and group =='valid'").index.values
         valid = new_dataset[valid_index]
+        ### valid: native && group==test
         test_index = d.query("use_compound_com and group =='test'").index.values
         test = new_dataset[test_index]
 
-        all_pocket_test_fileName = f"{pre}/apr23_testset_pdbbind_gvp_pocket_radius20/"
+        ### don't clear yet
+        all_pocket_test_fileName = f"{pre}/test_dataset"
         all_pocket_test = TankBindDataSet(all_pocket_test_fileName)
-        all_pocket_test.compound_dict = torch.load(f"{pre}/compound_dict.pt")
+        # all_pocket_test.compound_dict = torch.load(f"{all_pocket_test_fileName}/processed/compound.pt")
         # info is used to evaluate the test set. 
         info = None
         # info = pd.read_csv(f"{pre}/apr23_testset_pdbbind_gvp_pocket_radius20_info.csv", index_col=0)
@@ -211,7 +222,7 @@ def get_data(data_mode, logging, addNoise=None):
         add_noise_to_com = float(addNoise) if addNoise else None
 
         # compoundMode = 1 is for GIN model.
-        new_dataset = TankBindDataSet(f"{pre}/apr22_pdbbind_gvp_pocket_radius20", add_noise_to_com=add_noise_to_com)
+        new_dataset = TankBindDataSet(f"{pre}/dataset", add_noise_to_com=add_noise_to_com)
         # load GIN embedding for compounds.
         new_dataset.compound_dict = torch.load(f"{pre}/pdbbind_compound_dict_with_LAS_distance_constraint_mask.pt")
         new_dataset.data = new_dataset.data.query("c_length < 100 and native_num_contact > 5").reset_index(drop=True)
@@ -228,7 +239,7 @@ def get_data(data_mode, logging, addNoise=None):
         test_index = d.query("use_compound_com and group =='test'").index.values
         test = new_dataset[test_index]
 
-        all_pocket_test_fileName = f"{pre}/apr23_testset_pdbbind_gvp_pocket_radius20/"
+        all_pocket_test_fileName = f"{pre}/test_dataset/"
         all_pocket_test = TankBindDataSet(all_pocket_test_fileName)
         all_pocket_test.compound_dict = torch.load(f"{pre}/pdbbind_test_compound_dict_based_on_rdkit.pt")
         # info is used to evaluate the test set.

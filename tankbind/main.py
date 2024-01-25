@@ -228,10 +228,12 @@ for epoch in range(args.epoch_num):
         ### specifiy what y_pred predicts
         ### default: 1
         if args.pred_dis:
-            ### y_pred predictes distance_map 
+            ### y_pred -> distance_map 
             contact_loss = criterion(y_pred, dis_map) if len(dis_map) > 0 else torch.tensor([0]).to(dis_map.device)
         else:
-            ### y_pred predictes contact_map 
+            ### y_pred -> contact_map 
+            ### criterion here is BCEWithLogitsLoss(), therefore, although 
+            ### y_pred range [0-10], it will do sigmoid inside BCEWithLogitsLoss() 
             contact_loss = criterion(y_pred, y) if len(y) > 0 else torch.tensor([0]).to(y.device)
             y_pred = y_pred.sigmoid()
 

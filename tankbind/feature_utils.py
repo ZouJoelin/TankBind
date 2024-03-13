@@ -142,7 +142,7 @@ def Seed_everything(seed=42):
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
 
-# ckecked
+# checked
 def get_compound_pair_dis_distribution(coords, LAS_distance_constraint_mask=None):
     """ one-hot encoded pair-distance of atom in compound (ignore the principle details)
     return: torch.Size([atom_num, atom_num, 16])

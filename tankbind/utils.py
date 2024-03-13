@@ -172,6 +172,17 @@ def my_affinity_criterion(y_pred, y, mask, decoy_gap=1.0):
     affinity_loss[~mask] = (((y_pred - (y - decoy_gap)).relu())**2)[~mask]
     return affinity_loss.mean()
 
+# rewrite above my_affinity_criterion() as Class
+class MaxMarginAffinityLoss(torch.nn.Module):
+    def __init__(self, margin=2.0):
+        super(MaxMarginAffinityLoss, self).__init__()
+
+    def forward(self, y_pred, y, mask, margin):
+        affinity_loss = torch.zeros(y_pred.shape).to(y_pred.device)
+        affinity_loss[mask] = (((y_pred - y)**2)[mask])
+        affinity_loss[~mask] = (((y_pred - (y - margin)).relu())**2)[~mask]
+        return affinity_loss.mean()
+    
 # neglected
 def evaulate(data_loader, model, criterion, device, saveFileName=None):
     y_list = []
